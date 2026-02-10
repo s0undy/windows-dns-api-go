@@ -1,0 +1,27 @@
+# Binaries
+bin/
+*.exe
+server
+windows-dns-api-server
+
+# Config files (contain secrets)
+config.yaml
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

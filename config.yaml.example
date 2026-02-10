@@ -1,0 +1,23 @@
+server:
+  address: "0.0.0.0"
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+
+dns:
+  server_name: "."              # "." = local server
+  default_zone: "example.com"
+
+powershell:
+  timeout: 30s
+  executable: "powershell.exe"
+
+logging:
+  level: "info"                 # debug | info | warn | error
+  format: "json"               # json | text
+
+api_keys:
+  - name: "admin"
+    key: "your-secret-key-here"
+  - name: "automation"
+    key: "another-secret-key"
