@@ -2,6 +2,7 @@ package api
 
 import (
 	_ "embed"
+	"encoding/json"
 	"html/template"
 	"net/http"
 )
@@ -43,11 +44,18 @@ func (h *Handler) DocsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	// Prepare data with the OpenAPI spec as a JSON-safe string
+	// JSON-encode the OpenAPI spec to make it safe for JavaScript
+	specJSON, err := json.Marshal(openAPISpec)
+	if err != nil {
+		WriteInternalError(w, err)
+		return
+	}
+
+	// Prepare data with the properly encoded spec
 	data := struct {
-		Spec string
+		Spec template.JS
 	}{
-		Spec: "`" + openAPISpec + "`",
+		Spec: template.JS(specJSON),
 	}
 
 	if err := t.Execute(w, data); err != nil {
