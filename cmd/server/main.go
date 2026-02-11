@@ -266,11 +266,11 @@ func setupLogger(cfg *config.Config, isService bool) (*slog.Logger, *lumberjack.
 	// Set up log rotation with lumberjack
 	logFile := &lumberjack.Logger{
 		Filename:   logFilePath,
-		MaxSize:    cfg.Logging.MaxSize,    // megabytes
-		MaxAge:     0,                      // days (0 = never delete old logs)
-		MaxBackups: 0,                      // number of backups (0 = keep all)
-		LocalTime:  true,                   // use local time for backup filenames
-		Compress:   false,                  // don't compress old logs
+		MaxSize:    cfg.Logging.MaxSize, // megabytes
+		MaxAge:     0,                   // days (0 = never delete old logs)
+		MaxBackups: 0,                   // number of backups (0 = keep all)
+		LocalTime:  true,                // use local time for backup filenames
+		Compress:   false,               // don't compress old logs
 	}
 
 	// Force log file creation and test write
