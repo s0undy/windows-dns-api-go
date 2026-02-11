@@ -34,8 +34,11 @@ type PowerShellConfig struct {
 }
 
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level      string `yaml:"level"`
+	Format     string `yaml:"format"`
+	FilePath   string `yaml:"file_path"`
+	MaxSize    int    `yaml:"max_size_mb"`
+	RotateDays int    `yaml:"rotate_days"`
 }
 
 type APIKey struct {
@@ -97,6 +100,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Logging.Format == "" {
 		cfg.Logging.Format = "json"
+	}
+	if cfg.Logging.MaxSize == 0 {
+		cfg.Logging.MaxSize = 100
+	}
+	if cfg.Logging.RotateDays == 0 {
+		cfg.Logging.RotateDays = 30
 	}
 }
 

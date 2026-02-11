@@ -75,6 +75,45 @@ make run
 CONFIG_PATH=/path/to/config.yaml ./bin/windows-dns-api-server
 ```
 
+## Windows Service Installation
+
+For production deployments, install the API as a Windows service that starts automatically.
+
+See the **[Windows Service Installation Guide](docs/windows-service.md)** for detailed instructions including:
+- Automated installation scripts
+- Service management commands
+- Troubleshooting steps
+- Security configuration
+
+Quick start:
+
+```powershell
+# 1. Copy files to installation directory
+New-Item -Path "C:\Program Files\windows-dns-api-go" -ItemType Directory -Force
+Copy-Item -Path ".\windows-dns-api-server.exe" -Destination "C:\Program Files\windows-dns-api-go\"
+Copy-Item -Path ".\config.yaml" -Destination "C:\Program Files\windows-dns-api-go\"
+
+# 2. Install and start service
+sc.exe create WindowsDNSAPI binPath= "C:\Program Files\windows-dns-api-go\windows-dns-api-server.exe" start= auto DisplayName= "Windows DNS API"
+sc.exe description WindowsDNSAPI "REST API for managing Windows DNS Server records"
+sc.exe failure WindowsDNSAPI reset= 86400 actions= restart/5000/restart/5000/restart/5000
+sc.exe start WindowsDNSAPI
+```
+
+## API Documentation
+
+Interactive API documentation is available at `/docs` when the server is running:
+
+```
+http://localhost:8080/docs
+```
+
+The documentation is powered by [Scalar](https://scalar.com/) and provides:
+- Interactive API explorer with "Try It Out" functionality
+- Complete request/response examples
+- Authentication testing (add your API key directly in the UI)
+- Full schema documentation for all endpoints
+
 ## API Endpoints
 
 ### Health Check (No Authentication)

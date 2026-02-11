@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"gopkg.in/natefinch/lumberjack.v2"
 	"windows-dns-api-go/internal/api"
 	"windows-dns-api-go/internal/config"
 	"windows-dns-api-go/internal/dns"
@@ -31,9 +34,14 @@ func main() {
 	}
 
 	// Set up logging
-	logger := setupLogger(cfg)
+	logger, logFile := setupLogger(cfg)
 	slog.SetDefault(logger) // Set as default logger for middleware
 	logger.Info("Starting Windows DNS API Server", "config", configPath)
+
+	// Start log rotation timer if enabled
+	if cfg.Logging.RotateDays > 0 {
+		startLogRotationTimer(logFile, cfg.Logging.RotateDays)
+	}
 
 	// Create PowerShell executor
 	executor := powershell.New(cfg.PowerShell.Executable, cfg.PowerShell.Timeout)
@@ -97,7 +105,7 @@ func main() {
 	logger.Info("Server stopped")
 }
 
-func setupLogger(cfg *config.Config) *slog.Logger {
+func setupLogger(cfg *config.Config) (*slog.Logger, *lumberjack.Logger) {
 	var level slog.Level
 	switch cfg.Logging.Level {
 	case "debug":
@@ -116,12 +124,64 @@ func setupLogger(cfg *config.Config) *slog.Logger {
 		Level: level,
 	}
 
-	var handler slog.Handler
-	if cfg.Logging.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+	// Determine log file path
+	logFilePath := cfg.Logging.FilePath
+	if logFilePath == "" {
+		// Default: same directory as executable
+		exePath, err := os.Executable()
+		if err != nil {
+			// Fallback to current directory if we can't get executable path
+			logFilePath = "windows-dns-api.log"
+		} else {
+			exeDir := filepath.Dir(exePath)
+			logFilePath = filepath.Join(exeDir, "windows-dns-api.log")
+		}
 	}
 
-	return slog.New(handler)
+	// Set up log rotation with lumberjack
+	logFile := &lumberjack.Logger{
+		Filename:   logFilePath,
+		MaxSize:    cfg.Logging.MaxSize,    // megabytes
+		MaxAge:     0,                      // days (0 = never delete old logs)
+		MaxBackups: 0,                      // number of backups (0 = keep all)
+		LocalTime:  true,                   // use local time for backup filenames
+		Compress:   false,                  // don't compress old logs
+	}
+
+	// Create multi-writer for both stdout and file
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+
+	var handler slog.Handler
+	if cfg.Logging.Format == "json" {
+		handler = slog.NewJSONHandler(multiWriter, opts)
+	} else {
+		handler = slog.NewTextHandler(multiWriter, opts)
+	}
+
+	logger := slog.New(handler)
+	logger.Info("Logging configured",
+		"file_path", logFilePath,
+		"max_size_mb", cfg.Logging.MaxSize,
+		"rotate_days", cfg.Logging.RotateDays)
+
+	return logger, logFile
+}
+
+// startLogRotationTimer starts a background goroutine that rotates the log file
+// every N days. The goroutine runs until the program exits.
+func startLogRotationTimer(logFile *lumberjack.Logger, rotateDays int) {
+	interval := time.Duration(rotateDays) * 24 * time.Hour
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		for range ticker.C {
+			if err := logFile.Rotate(); err != nil {
+				slog.Error("Failed to rotate log file", "error", err)
+			} else {
+				slog.Info("Log file rotated on schedule", "interval_days", rotateDays)
+			}
+		}
+	}()
+
+	slog.Info("Log rotation timer started", "interval_days", rotateDays)
 }

@@ -1,0 +1,581 @@
+openapi: 3.1.0
+info:
+  title: Windows DNS API
+  version: 1.0.0
+  description: |
+    REST API for managing DNS records on Microsoft Windows DNS Server.
+
+    ## Authentication
+    All endpoints except `/api/v1/health` require authentication via the `X-API-Key` header.
+
+    ## Features
+    - A Record Management (CRUD operations)
+    - PowerShell integration for direct DNS manipulation
+    - Structured error responses
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://your-server.example.com
+    description: Production server
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication. Configured in config.yaml.
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ok
+      required:
+        - data
+
+    ARecord:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Hostname without the zone
+          example: www
+        zone:
+          type: string
+          description: DNS zone name
+          example: example.com
+        ipv4_address:
+          type: string
+          format: ipv4
+          description: IPv4 address
+          example: 192.168.1.100
+        ttl:
+          type: integer
+          format: uint32
+          description: Time to live in seconds
+          example: 3600
+          minimum: 0
+          maximum: 604800
+      required:
+        - name
+        - zone
+        - ipv4_address
+        - ttl
+
+    CreateARecordRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Hostname without the zone (alphanumeric and hyphens, max 63 chars)
+          example: www
+          pattern: '^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$'
+        zone:
+          type: string
+          description: DNS zone name (optional, uses default_zone from config if not specified)
+          example: example.com
+        ipv4_address:
+          type: string
+          format: ipv4
+          description: IPv4 address
+          example: 192.168.1.100
+        ttl:
+          type: integer
+          format: uint32
+          description: Time to live in seconds
+          example: 3600
+          minimum: 0
+          maximum: 604800
+      required:
+        - name
+        - ipv4_address
+        - ttl
+
+    UpdateARecordRequest:
+      type: object
+      properties:
+        zone:
+          type: string
+          description: DNS zone name (optional, uses default_zone from config if not specified)
+          example: example.com
+        ipv4_address:
+          type: string
+          format: ipv4
+          description: IPv4 address
+          example: 192.168.1.101
+        ttl:
+          type: integer
+          format: uint32
+          description: Time to live in seconds
+          example: 7200
+          minimum: 0
+          maximum: 604800
+      required:
+        - ipv4_address
+        - ttl
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+              description: Human-readable error message
+              example: Record not found
+            code:
+              type: string
+              description: Machine-readable error code
+              enum:
+                - bad_request
+                - unauthorized
+                - not_found
+                - conflict
+                - internal_error
+              example: not_found
+          required:
+            - message
+            - code
+      required:
+        - error
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      description: Check if the API server is running and healthy
+      operationId: getHealth
+      security: []
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/records/a:
+    get:
+      summary: List A records
+      description: List all A records in a DNS zone
+      operationId: listARecords
+      tags:
+        - A Records
+      parameters:
+        - name: zone
+          in: query
+          description: DNS zone name (optional, uses default_zone from config if not specified)
+          schema:
+            type: string
+            example: example.com
+      responses:
+        '200':
+          description: List of A records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ARecord'
+              examples:
+                empty:
+                  summary: No records found
+                  value:
+                    data: []
+                multiple:
+                  summary: Multiple A records
+                  value:
+                    data:
+                      - name: www
+                        zone: example.com
+                        ipv4_address: 192.168.1.100
+                        ttl: 3600
+                      - name: mail
+                        zone: example.com
+                        ipv4_address: 192.168.1.101
+                        ttl: 3600
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Unauthorized
+                  code: unauthorized
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Internal server error
+                  code: internal_error
+
+    post:
+      summary: Create A record
+      description: Create a new A record in the DNS zone
+      operationId: createARecord
+      tags:
+        - A Records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateARecordRequest'
+            examples:
+              default_zone:
+                summary: Using default zone
+                value:
+                  name: www
+                  ipv4_address: 192.168.1.100
+                  ttl: 3600
+              explicit_zone:
+                summary: Explicit zone specified
+                value:
+                  name: api
+                  zone: example.com
+                  ipv4_address: 192.168.1.150
+                  ttl: 7200
+      responses:
+        '201':
+          description: A record created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ARecord'
+              example:
+                data:
+                  name: www
+                  zone: example.com
+                  ipv4_address: 192.168.1.100
+                  ttl: 3600
+        '400':
+          description: Bad request - Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_ip:
+                  summary: Invalid IP address
+                  value:
+                    error:
+                      message: "invalid IPv4 address"
+                      code: bad_request
+                missing_field:
+                  summary: Missing required field
+                  value:
+                    error:
+                      message: "name is required"
+                      code: bad_request
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Unauthorized
+                  code: unauthorized
+        '409':
+          description: Conflict - Record already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Record already exists
+                  code: conflict
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Internal server error
+                  code: internal_error
+
+  /api/v1/records/a/{name}:
+    get:
+      summary: Get A record
+      description: Get a specific A record by name
+      operationId: getARecord
+      tags:
+        - A Records
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Hostname without the zone
+          schema:
+            type: string
+            example: www
+        - name: zone
+          in: query
+          description: DNS zone name (optional, uses default_zone from config if not specified)
+          schema:
+            type: string
+            example: example.com
+      responses:
+        '200':
+          description: A record found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ARecord'
+              example:
+                data:
+                  name: www
+                  zone: example.com
+                  ipv4_address: 192.168.1.100
+                  ttl: 3600
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Unauthorized
+                  code: unauthorized
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Record not found
+                  code: not_found
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Internal server error
+                  code: internal_error
+
+    put:
+      summary: Update A record
+      description: |
+        Update an existing A record. This operation performs a delete followed by create
+        (remove old record + add new record) to ensure clean updates.
+      operationId: updateARecord
+      tags:
+        - A Records
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Hostname without the zone
+          schema:
+            type: string
+            example: www
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateARecordRequest'
+            examples:
+              update_ip:
+                summary: Update IP address
+                value:
+                  ipv4_address: 192.168.1.101
+                  ttl: 3600
+              update_all:
+                summary: Update IP and TTL
+                value:
+                  zone: example.com
+                  ipv4_address: 192.168.1.101
+                  ttl: 7200
+      responses:
+        '200':
+          description: A record updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ARecord'
+              example:
+                data:
+                  name: www
+                  zone: example.com
+                  ipv4_address: 192.168.1.101
+                  ttl: 7200
+        '400':
+          description: Bad request - Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: "invalid IPv4 address"
+                  code: bad_request
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Unauthorized
+                  code: unauthorized
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Record not found
+                  code: not_found
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Internal server error
+                  code: internal_error
+
+    delete:
+      summary: Delete A record
+      description: |
+        Delete a specific A record. The value (IP address) is required because a hostname
+        can have multiple A records pointing to different IP addresses.
+      operationId: deleteARecord
+      tags:
+        - A Records
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Hostname without the zone
+          schema:
+            type: string
+            example: www
+        - name: zone
+          in: query
+          description: DNS zone name (optional, uses default_zone from config if not specified)
+          schema:
+            type: string
+            example: example.com
+        - name: value
+          in: query
+          required: true
+          description: IP address to delete (required because a hostname can have multiple A records)
+          schema:
+            type: string
+            format: ipv4
+            example: 192.168.1.100
+      responses:
+        '200':
+          description: A record deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: Record deleted successfully
+              example:
+                data:
+                  message: Record deleted successfully
+        '400':
+          description: Bad request - Missing required parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: "value parameter is required"
+                  code: bad_request
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Unauthorized
+                  code: unauthorized
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Record not found
+                  code: not_found
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  message: Internal server error
+                  code: internal_error
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: A Records
+    description: A record management operations (IPv4 address records)
