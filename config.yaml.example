@@ -15,6 +15,10 @@ powershell:
 logging:
   level: "info"                 # debug | info | warn | error
   format: "json"               # json | text
+  file_path: ""                # Empty = default to exe directory + "windows-dns-api.log"
+  max_size_mb: 100            # Max log file size in MB before rotation (0 = no size-based rotation)
+  rotate_days: 30             # Rotate every N days (0 = disabled). Default: 30
+                               # Note: All rotated logs are kept permanently (never deleted)
 
 api_keys:
   - name: "admin"

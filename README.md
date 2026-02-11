@@ -7,6 +7,9 @@ A REST API in Go for managing DNS records on Microsoft Windows DNS Server. The A
 - **A Record Management**: Full CRUD operations for A records
 - **API Key Authentication**: Secure access via `X-API-Key` header
 - **PowerShell Integration**: Direct execution of DNS cmdlets
+- **File Logging with Rotation**: Automatic log rotation (size + time-based), dual output (console + file)
+- **Windows Service Support**: Native Windows service integration with SCM, auto-restart on failure
+- **Interactive API Documentation**: Scalar-powered docs at `/docs` with "Try It Out" functionality
 - **Structured Logging**: JSON or text format with configurable levels
 - **Graceful Shutdown**: Safe termination with connection draining
 - **Extensible Design**: Provider/Registry pattern for easy addition of new record types
@@ -56,6 +59,10 @@ powershell:
 logging:
   level: "info"                 # debug | info | warn | error
   format: "json"               # json | text
+  file_path: ""                # Empty = default to exe directory + "windows-dns-api.log"
+  max_size_mb: 100            # Max log file size before rotation (0 = no size-based rotation)
+  rotate_days: 30             # Rotate every N days (0 = disabled). Default: 30
+                               # Note: All rotated logs are kept permanently (never deleted)
 
 api_keys:
   - name: "admin"
@@ -74,6 +81,56 @@ make run
 # Or specify config path
 CONFIG_PATH=/path/to/config.yaml ./bin/windows-dns-api-server
 ```
+
+## Windows Service Installation
+
+For production deployments, install the API as a Windows service that starts automatically.
+
+### Automated Installation
+
+Use the provided PowerShell script for one-command installation:
+
+```powershell
+# Basic installation (recommended)
+.\scripts\install-service.ps1
+
+# Custom installation path
+.\scripts\install-service.ps1 -InstallPath "D:\Services\dns-api" -BinaryPath ".\bin\windows-dns-api-server.exe"
+```
+
+The script automatically:
+- ✅ Creates installation directory at `C:\Program Files\windows-dns-api-go`
+- ✅ Copies binary and configuration files
+- ✅ Sets secure file permissions (Administrators + SYSTEM only)
+- ✅ Creates Windows service with LocalSystem account
+- ✅ Configures auto-restart on failure
+- ✅ Starts the service and verifies it's running
+
+**Uninstallation:**
+```powershell
+.\scripts\uninstall-service.ps1
+```
+
+See the **[Windows Service Installation Guide](docs/windows-service.md)** for:
+- Detailed installation instructions
+- Service management commands (start, stop, restart, status)
+- Troubleshooting guide
+- Security configuration options
+- Manual installation steps
+
+## API Documentation
+
+Interactive API documentation is available at `/docs` when the server is running:
+
+```
+http://localhost:8080/docs
+```
+
+The documentation is powered by [Scalar](https://scalar.com/) and provides:
+- Interactive API explorer with "Try It Out" functionality
+- Complete request/response examples
+- Authentication testing (add your API key directly in the UI)
+- Full schema documentation for all endpoints
 
 ## API Endpoints
 
@@ -176,12 +233,17 @@ make clean
 
 ```
 windows-dns-api-go/
-├── cmd/server/main.go              # Entry point
+├── cmd/server/
+│   ├── main.go                     # Entry point
+│   ├── service_windows.go          # Windows service handler (Windows only)
+│   └── service_other.go            # Service stub (non-Windows platforms)
 ├── internal/
 │   ├── api/                        # HTTP handlers and routing
 │   │   ├── handler.go              # Shared handler struct
 │   │   ├── arecord_handler.go      # A record CRUD handlers
 │   │   ├── health_handler.go       # Health check handler
+│   │   ├── docs_handler.go         # Scalar API documentation handler
+│   │   ├── openapi.yaml            # OpenAPI 3.1 specification (embedded)
 │   │   ├── request.go              # Request helpers
 │   │   ├── response.go             # Response helpers
 │   │   └── routes.go               # Route registration
@@ -201,6 +263,11 @@ windows-dns-api-go/
 │   │   └── executor.go
 │   └── validate/                   # Input validation
 │       └── validate.go
+├── scripts/
+│   ├── install-service.ps1         # Automated service installation
+│   └── uninstall-service.ps1       # Automated service removal
+├── docs/
+│   └── windows-service.md          # Windows service installation guide
 ├── config.yaml.example
 ├── go.mod
 └── Makefile

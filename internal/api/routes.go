@@ -14,6 +14,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, apiKeys map[string]string) 
 	// Health endpoint (no auth)
 	mux.HandleFunc("GET /api/v1/health", h.Health)
 
+	// API Documentation (no auth)
+	mux.HandleFunc("GET /docs", h.DocsHandler)
+
 	// A record endpoints (with auth)
 	mux.Handle("GET /api/v1/records/a", authMiddleware(http.HandlerFunc(h.ListARecords)))
 	mux.Handle("GET /api/v1/records/a/{name}", authMiddleware(http.HandlerFunc(h.GetARecord)))
