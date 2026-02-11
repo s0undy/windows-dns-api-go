@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -20,11 +21,27 @@ import (
 	"windows-dns-api-go/internal/powershell"
 )
 
+const serviceName = "WindowsDNSAPI"
+
+var (
+	// Global server reference for service control
+	httpServer *http.Server
+	// serviceStopChan is used to signal shutdown from Windows service handler
+	serviceStopChan chan struct{}
+)
+
 func main() {
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
-		configPath = "config.yaml"
+		// When running as a service, look for config next to executable
+		exePath, err := os.Executable()
+		if err == nil {
+			exeDir := filepath.Dir(exePath)
+			configPath = filepath.Join(exeDir, "config.yaml")
+		} else {
+			configPath = "config.yaml"
+		}
 	}
 
 	cfg, err := config.Load(configPath)
@@ -43,6 +60,88 @@ func main() {
 		startLogRotationTimer(logFile, cfg.Logging.RotateDays)
 	}
 
+	// Check if running as Windows service
+	if runtime.GOOS == "windows" {
+		isService, err := isWindowsService()
+		if err != nil {
+			logger.Error("Failed to determine service status", "error", err)
+			os.Exit(1)
+		}
+
+		if isService {
+			logger.Info("Running as Windows service")
+			// Run as Windows service
+			if err := runService(cfg); err != nil {
+				logger.Error("Service failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Run in console mode (development or non-Windows)
+	logger.Info("Running in console mode")
+	if err := runConsole(cfg); err != nil {
+		logger.Error("Console mode failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+// runService runs the application as a Windows service
+func runService(cfg *config.Config) error {
+	// Create stop channel for service control
+	stopChan := make(chan struct{})
+	serviceStopChan = stopChan // Set global for Windows service handler
+
+	errChan := make(chan error, 1)
+
+	// Start HTTP server in background
+	go func() {
+		if err := startHTTPServer(cfg, stopChan); err != nil {
+			errChan <- err
+		}
+	}()
+
+	// Run Windows service handler (this blocks until service stops)
+	if err := runAsService(serviceName); err != nil {
+		return err
+	}
+
+	// Wait for HTTP server to finish shutdown
+	select {
+	case err := <-errChan:
+		return err
+	case <-time.After(20 * time.Second):
+		// Timeout waiting for server shutdown
+		return nil
+	}
+}
+
+// runConsole runs the application in console mode (Ctrl+C to stop)
+func runConsole(cfg *config.Config) error {
+	stopChan := make(chan struct{})
+
+	// Start HTTP server in background
+	go func() {
+		if err := startHTTPServer(cfg, stopChan); err != nil {
+			slog.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("Shutting down server...")
+	close(stopChan)
+
+	return nil
+}
+
+// startHTTPServer initializes and starts the HTTP server
+func startHTTPServer(cfg *config.Config, stopChan chan struct{}) error {
 	// Create PowerShell executor
 	executor := powershell.New(cfg.PowerShell.Executable, cfg.PowerShell.Timeout)
 
@@ -53,7 +152,7 @@ func main() {
 	aProvider := dns.NewARecordProvider(executor, cfg.DNS.ServerName)
 	registry.Register(dns.RecordTypeA, aProvider)
 
-	logger.Info("Registered DNS providers", "types", []string{"A"})
+	slog.Info("Registered DNS providers", "types", []string{"A"})
 
 	// Create API handler
 	handler := api.NewHandler(registry, cfg)
@@ -70,7 +169,7 @@ func main() {
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Address, cfg.Server.Port)
-	server := &http.Server{
+	httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      httpHandler,
 		ReadTimeout:  cfg.Server.ReadTimeout,
@@ -78,31 +177,30 @@ func main() {
 	}
 
 	// Start server in goroutine
+	serverErrChan := make(chan error, 1)
 	go func() {
-		logger.Info("Server listening", "address", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Server failed", "error", err)
-			os.Exit(1)
+		slog.Info("Server listening", "address", addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErrChan <- err
 		}
 	}()
 
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
+	// Wait for stop signal or server error
+	select {
+	case err := <-serverErrChan:
+		return fmt.Errorf("server error: %w", err)
+	case <-stopChan:
+		// Graceful shutdown with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	logger.Info("Shutting down server...")
+		if err := httpServer.Shutdown(ctx); err != nil {
+			return fmt.Errorf("shutdown error: %w", err)
+		}
 
-	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("Server forced to shutdown", "error", err)
-		os.Exit(1)
+		slog.Info("Server stopped")
+		return nil
 	}
-
-	logger.Info("Server stopped")
 }
 
 func setupLogger(cfg *config.Config) (*slog.Logger, *lumberjack.Logger) {
