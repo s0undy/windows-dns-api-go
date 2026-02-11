@@ -1,7 +1,6 @@
 # Binaries
 bin/
 *.exe
-server
 windows-dns-api-server
 
 # Config files (contain secrets)
