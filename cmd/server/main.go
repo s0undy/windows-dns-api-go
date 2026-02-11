@@ -50,10 +50,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Detect if running as Windows service
+	isService := false
+	if runtime.GOOS == "windows" {
+		isWindowsSvc, err := isWindowsService()
+		if err == nil {
+			isService = isWindowsSvc
+		}
+	}
+
 	// Set up logging
-	logger, logFile := setupLogger(cfg)
+	logger, logFile := setupLogger(cfg, isService)
 	slog.SetDefault(logger) // Set as default logger for middleware
-	logger.Info("Starting Windows DNS API Server", "config", configPath)
+	logger.Info("Starting Windows DNS API Server",
+		"config", configPath,
+		"service_mode", isService)
 
 	// Start log rotation timer if enabled
 	if cfg.Logging.RotateDays > 0 {
@@ -203,7 +214,7 @@ func startHTTPServer(cfg *config.Config, stopChan chan struct{}) error {
 	}
 }
 
-func setupLogger(cfg *config.Config) (*slog.Logger, *lumberjack.Logger) {
+func setupLogger(cfg *config.Config, isService bool) (*slog.Logger, *lumberjack.Logger) {
 	var level slog.Level
 	switch cfg.Logging.Level {
 	case "debug":
@@ -236,6 +247,22 @@ func setupLogger(cfg *config.Config) (*slog.Logger, *lumberjack.Logger) {
 		}
 	}
 
+	// Ensure log directory exists
+	logDir := filepath.Dir(logFilePath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create log directory %s: %v\n", logDir, err)
+	}
+
+	// Test that we can create/write to the log file
+	testFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Cannot write to log file %s: %v\n", logFilePath, err)
+		fmt.Fprintf(os.Stderr, "Logs will only be written to stdout\n")
+		// Continue with just stdout logging
+	} else {
+		testFile.Close()
+	}
+
 	// Set up log rotation with lumberjack
 	logFile := &lumberjack.Logger{
 		Filename:   logFilePath,
@@ -246,21 +273,43 @@ func setupLogger(cfg *config.Config) (*slog.Logger, *lumberjack.Logger) {
 		Compress:   false,                  // don't compress old logs
 	}
 
-	// Create multi-writer for both stdout and file
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	// Force log file creation and test write
+	if _, err := logFile.Write([]byte("")); err != nil {
+		fmt.Fprintf(os.Stderr, "CRITICAL: Failed to write to log file %s: %v\n", logFilePath, err)
+		fmt.Fprintf(os.Stderr, "The service may not have permissions to write to this directory.\n")
+		// Continue anyway - at least stderr will show the error
+	}
+
+	// Choose output writer based on execution mode
+	var writer io.Writer
+	if isService {
+		// Services don't have stdout, write only to file
+		writer = logFile
+	} else {
+		// Console mode: write to both stdout and file
+		writer = io.MultiWriter(os.Stdout, logFile)
+	}
 
 	var handler slog.Handler
 	if cfg.Logging.Format == "json" {
-		handler = slog.NewJSONHandler(multiWriter, opts)
+		handler = slog.NewJSONHandler(writer, opts)
 	} else {
-		handler = slog.NewTextHandler(multiWriter, opts)
+		handler = slog.NewTextHandler(writer, opts)
 	}
 
 	logger := slog.New(handler)
+
+	// Get absolute path for logging
+	absLogPath, _ := filepath.Abs(logFilePath)
+	exePath, _ := os.Executable()
+	workDir, _ := os.Getwd()
+
 	logger.Info("Logging configured",
-		"file_path", logFilePath,
+		"file_path", absLogPath,
 		"max_size_mb", cfg.Logging.MaxSize,
-		"rotate_days", cfg.Logging.RotateDays)
+		"rotate_days", cfg.Logging.RotateDays,
+		"executable_path", exePath,
+		"working_directory", workDir)
 
 	return logger, logFile
 }
